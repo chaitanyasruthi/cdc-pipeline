@@ -72,7 +72,7 @@ services:
       interval: 10s
       retries: 5
 
-   processor:
+  processor:
     build: ./processor
     container_name: processor
     depends_on:

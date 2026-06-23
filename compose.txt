@@ -1,0 +1,84 @@
+     1	services:
+     2	
+     3	  zookeeper:
+     4	    image: confluentinc/cp-zookeeper:7.0.1
+     5	    container_name: zookeeper
+     6	    environment:
+     7	      ZOOKEEPER_CLIENT_PORT: 2181
+     8	    healthcheck:
+     9	      test: ["CMD", "nc", "-z", "localhost", "2181"]
+    10	      interval: 10s
+    11	      retries: 5
+    12	
+    13	  kafka:
+    14	    image: confluentinc/cp-kafka:7.0.1
+    15	    container_name: kafka
+    16	    depends_on:
+    17	      zookeeper:
+    18	        condition: service_healthy
+    19	    ports:
+    20	      - "9092:9092"
+    21	    environment:
+    22	      KAFKA_BROKER_ID: 1
+    23	      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+    24	      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+    25	      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    26	    healthcheck:
+    27	      test: ["CMD", "nc", "-z", "localhost", "9092"]
+    28	      interval: 10s
+    29	      retries: 5
+    30	
+    31	  mysql:
+    32	    image: mysql:5.7
+    33	    container_name: mysql
+    34	    ports:
+    35	      - "3306:3306"
+    36	    environment:
+    37	      MYSQL_ROOT_PASSWORD: root
+    38	      MYSQL_DATABASE: inventory
+    39	    volumes:
+    40	      - ./mysql/init:/docker-entrypoint-initdb.d
+    41	    command: >
+    42	      --server-id=1
+    43	      --log-bin=mysql-bin
+    44	      --binlog_format=ROW
+    45	    healthcheck:
+    46	      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+    47	      interval: 10s
+    48	      retries: 5
+    49	
+    50	  connect:
+    51	    image: debezium/connect:2.5
+    52	    container_name: connect
+    53	    ports:
+    54	      - "8083:8083"
+    55	    depends_on:
+    56	      kafka:
+    57	        condition: service_healthy
+    58	      mysql:
+    59	        condition: service_healthy
+    60	    environment:
+    61	      BOOTSTRAP_SERVERS: kafka:9092
+    62	      GROUP_ID: 1
+    63	      CONFIG_STORAGE_TOPIC: connect_configs
+    64	      OFFSET_STORAGE_TOPIC: connect_offsets
+    65	      STATUS_STORAGE_TOPIC: connect_statuses
+    66	      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+    67	      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+    68	      KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+    69	      VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+    70	    healthcheck:
+    71	      test: ["CMD", "curl", "-f", "http://localhost:8083"]
+    72	      interval: 10s
+    73	      retries: 5
+    74	
+    75	   processor:
+    76	    build: ./processor
+    77	    container_name: processor
+    78	    depends_on:
+    79	      kafka:
+    80	        condition: service_healthy
+    81	    volumes:
+    82	      - ./data_lake:/app/data_lake
+    83	      - ./state:/app/state
+    84	      - ./output:/app/output
