@@ -2,8 +2,9 @@ FROM python:3.10
 
 WORKDIR /app
 
-COPY processor.py .
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-RUN pip install kafka-python pandas pyarrow
+COPY . .
 
 CMD ["python", "processor.py"]
