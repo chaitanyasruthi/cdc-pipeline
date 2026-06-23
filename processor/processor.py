@@ -1,20 +1,25 @@
 from kafka import KafkaConsumer
 import json
-import pandas as pd
-import os
-import time
 from datetime import datetime
+from parquet_writer import write_parquet
+from schema_store import init_db, register_schema
+
+init_db()
 
 consumer = KafkaConsumer(
-    'dbserver1.inventory.products',
-    bootstrap_servers='kafka:9092',
-    value_deserializer=lambda m: json.loads(m.decode('utf-8'))
+    "dbserver1.inventory.products",
+    bootstrap_servers="kafka:9092",
+    value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+    auto_offset_reset="earliest",
+    enable_auto_commit=True
 )
 
 print("Listening for CDC events...")
 
 for message in consumer:
+
     event = message.value
+
     payload = event.get("payload")
 
     if not payload:
@@ -32,26 +37,48 @@ for message in consumer:
     if not data:
         continue
 
-    # add metadata
-    data["op"] = op
-    date = datetime.now().strftime("%Y-%m-%d")
+    table_name = "products"
 
-    df = pd.DataFrame([data])
+    schema_definition = {
+        k: str(type(v).__name__)
+        for k, v in data.items()
+    }
 
-    # partitioned folder
-    folder = f"/app/data_lake/products/{date}/{op}/"
-    os.makedirs(folder, exist_ok=True)
+    schema_version = register_schema(
+        table_name,
+        schema_definition
+    )
 
-    file_path = folder + f"data_{int(time.time())}.parquet"
+    data["schema_version"] = schema_version
+    data["event_timestamp"] = datetime.utcnow().isoformat()
+    data["op_type"] = op
 
-    df.to_parquet(file_path, engine="pyarrow", index=False)
+    file_path = write_parquet(
+        data,
+        table_name,
+        op
+    )
 
-    print("Saved Parquet:", file_path)
-    lineage = {
-    "source": "inventory.products",
-    "operation": op,
-    "timestamp": str(datetime.now())
-}
+    lineage_record = {
+        "source_table": table_name,
+        "schema_version": schema_version,
+        "active_from": datetime.utcnow().isoformat(),
+        "output_partitions": [
+            f"/data_lake/{table_name}/{datetime.now().strftime('%Y-%m-%d')}/{op}/"
+        ],
+        "output_schema": schema_definition
+    }
 
-with open("/app/data_lake/lineage.json", "a") as f:
-    f.write(json.dumps(lineage) + "\n")
+    try:
+        with open(
+            "/app/output/lineage_report.json",
+            "a"
+        ) as f:
+            f.write(json.dumps(lineage_record))
+            f.write("\n")
+    except Exception as e:
+        print("Lineage error:", e)
+
+    print(
+        f"Saved {file_path} | schema_version={schema_version}"
+    )
